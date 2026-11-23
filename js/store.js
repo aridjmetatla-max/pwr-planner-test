@@ -6,10 +6,24 @@
 //
 // Track: B - Data + device
 
-import { DAYS, PERIODS, APP_VERSION } from './config.js';
+import { DAYS, PERIODS, APP_VERSION, DEFAULT_SPEECH_MODEL } from './config.js';
+import { defaultLang, getLang } from './i18n.js';
 
 export const STATE_VERSION = 5;
-const KEY = 'pwr-planner';
+// Demo mode (Design Day): visitors use a separate example planner; her own planner is never touched.
+const DEMO_FLAG = 'pwr-demo-mode';
+export const isDemo = () => { try { return localStorage.getItem(DEMO_FLAG) === '1'; } catch (e) { return false; } };
+const KEY_REAL = 'pwr-planner';
+const KEY_DEMO = 'pwr-planner-demo';
+const keyNow = () => (isDemo() ? KEY_DEMO : KEY_REAL);
+// Switching reloads the page, so every screen starts again from the right planner.
+export function setDemo(on) {
+  try {
+    if (on) { localStorage.setItem(DEMO_FLAG, '1'); localStorage.removeItem(KEY_DEMO); } else localStorage.removeItem(DEMO_FLAG);
+  } catch (e) { /* storage unavailable */ }
+  location.reload();
+}
+export function resetDemo() { try { localStorage.removeItem(KEY_DEMO); } catch (e) { /* */ } location.reload(); }
 const LEGACY_KEYS = ['my-week-my-way-v2']; // first-try planner
 
 export function uid() {
@@ -40,6 +54,37 @@ const seedLibrary = [
   A('rest', 'Rest', 'rest', 30, { reminder: false, note: 'Only when you want it.' }),
 ];
 
+// The same example activities in French (client feedback, Nov 2026). Used when the planner starts in French.
+const FR_SEED = {
+  walk: ['Marche + petites courses', 'Tous les jours. Ça recharge.', ['Sac', 'Clés et téléphone', 'Crayon et note']],
+  physio: ['Physiothérapie', 'Vendredi matin. Plus dur avec un nouvel exercice.', ['Feuille d’exercices', 'Bouteille d’eau']],
+  church: ['Église', 'Dimanche matin.'],
+  exercise: ['Cours d’exercice', 'Mercredi matin (énergie à vérifier).'],
+  music: ['Cours de musique', 'Mardi soir (énergie à vérifier).', ['Instrument', 'Cahier de musique']],
+  medical: ['Rendez-vous médical', 'Mieux le mardi ou le jeudi.', ['Carte santé', 'Liste de questions']],
+  meal: ['Préparer un repas (partie)', 'Un repas en 3 jours : viande, légumes, riz ou pâtes.', ['Mettre la minuterie du four']],
+  dishes: ['Vider le lave-vaisselle (partie)', 'En 3 jours : ustensiles, assiettes, tasses.'],
+  laundry: ['Lessive (laveuse / sécheuse)'],
+  hang: ['Étendre le linge', 'Entre vert et jaune.'],
+  bed: ['Changer les draps et les serviettes', 'Samedi. Repos sur le divan après.'],
+  vacuum: ['Aspirateur', 'Pas le même jour que les planchers (énergie à vérifier).'],
+  floors: ['Laver les planchers', 'Après l’aspirateur, un autre jour (énergie à vérifier).'],
+  friend: ['Dîner avec une amie', 'Toutes les quelques semaines.'],
+  hobby: ['Loisir'],
+  rest: ['Repos', 'Seulement quand vous le voulez.'],
+};
+const FR_PARTS = { 'Meal prep 1/3: meat': 'Repas 1/3 : viande', 'Meal prep 2/3: vegetables': 'Repas 2/3 : légumes', 'Meal prep 3/3: rice or pasta': 'Repas 3/3 : riz ou pâtes',
+  'Unload dishwasher 1/3: cutlery': 'Lave-vaisselle 1/3 : ustensiles', 'Unload dishwasher 2/3: plates': 'Lave-vaisselle 2/3 : assiettes', 'Unload dishwasher 3/3: cups': 'Lave-vaisselle 3/3 : tasses',
+  'Short walk': 'Petite marche' };
+function inFrench(a) {
+  const fr = FR_SEED[a.activityId || a.id];
+  if (!fr) return a;
+  const out = { ...a, name: FR_PARTS[a.name] || (a.name === seedLibrary.find((x) => x.id === (a.activityId || a.id))?.name ? fr[0] : a.name) };
+  if (fr[1] !== undefined) out.note = fr[1];
+  if (fr[2]) out.steps = [...fr[2]];
+  return out;
+}
+
 const lib = (id) => seedLibrary.find((a) => a.id === id);
 const put = (schedule, day, period, id, extra = {}) => {
   const a = lib(id);
@@ -48,13 +93,19 @@ const put = (schedule, day, period, id, extra = {}) => {
 
 export const defaultSettings = () => ({
   contrast: false, large: false, alerts: true, sms: false, lead: 60, theme: 'sage',
-  speechModel: 'Xenova/whisper-tiny.en', demoDevice: false,
+  speechModel: DEFAULT_SPEECH_MODEL, demoDevice: false,
   connection: 'bluetooth', // 'bluetooth' or 'wifi' (docs/wifi-plan.md)
   wifi: { broker: '', username: '', password: '', code: '' },
   weekStart: 'Sunday',     // her kitchen calendar starts on Sunday
+  startView: 'weekly',     // page to open: 'weekly' (Week) or 'day' (One day, on today)
   font: 'system',          // 'system', 'atkinson' or 'serif' (docs/design-evidence.md: let her choose)
   size: 'standard',        // 'small' 15 px · 'standard' 17 px · 'large' 19 px · 'xlarge' 22 px
   spacing: 'comfortable',  // or 'spacious' (W3C COGA: let users adjust white space)
+  lang: defaultLang(),     // 'en' or 'fr' (client feedback, Nov 2026)
+  appReminders: true,      // reminders on the iPad too, at the same times as the device
+  suggestionsOpen: false,  // the Suggestions panel is closed until she opens it
+  layout: 'week',          // main screen: 'week' or 'day' (One day), switch at the top
+  tutorialDone: false,     // the first-use tutorial was seen (or skipped)
 });
 
 export function emptySchedule() {
@@ -98,7 +149,7 @@ export function clientLeftovers() {
 }
 
 // A weekly activity's details, without what belongs to one week (its id, where it is, voice marks).
-const TEMPLATE_KEYS = ['name', 'energy', 'duration', 'reminder', 'steps', 'note', 'appointment', 'quiet', 'activityId', 'questions'];
+const TEMPLATE_KEYS = ['name', 'energy', 'duration', 'reminder', 'steps', 'note', 'appointment', 'quiet', 'activityId', 'questions', 'time'];
 export function seriesTemplate(item) {
   const t = {};
   TEMPLATE_KEYS.forEach((k) => { if (item[k] !== undefined) t[k] = JSON.parse(JSON.stringify(item[k])); });
@@ -137,6 +188,12 @@ export function fresh() {
     changeLog: [],
     updatedAt: Date.now(),
   };
+  if (getLang() === 'fr') {
+    state.library = state.library.map(inFrench);
+    DAYS.forEach((d) => PERIODS.forEach((p) => (state.schedule[d][p] = state.schedule[d][p].map(inFrench))));
+    state.leftovers = state.leftovers.map(inFrench);
+  }
+  state.settings.lang = getLang();
   toSeries(state); // the example week's weekly activities (walk, church, physio…) become series
   return state;
 }
@@ -184,7 +241,11 @@ export function migrate(raw) {
     s.version = 5;
   }
   s.settings = { ...defaultSettings(), ...(s.settings || {}) };
+  // 'today' (v0.9.1, before One day replaced the Today screen) now opens One day.
+  s.settings.startView = ['day', 'today'].includes(s.settings.startView) ? 'day' : 'weekly';
   if (s.settings.large && !raw.settings?.size) s.settings.size = 'large'; // old "Larger text" switch
+  // v0.10: the more accurate speech model becomes the default once (she can still choose the small one).
+  if (!s.settings.modelV10) { s.settings.speechModel = DEFAULT_SPEECH_MODEL; s.settings.modelV10 = true; }
   s.changeLog = Array.isArray(s.changeLog) ? s.changeLog : [];
   s.leftovers = Array.isArray(s.leftovers) ? s.leftovers : [];
   // v0.8.1: no energy tracking. Check-ins from older versions are deleted, not kept.
@@ -203,20 +264,21 @@ export function migrate(raw) {
 
 export function load() {
   let raw = null;
-  try { raw = localStorage.getItem(KEY); } catch (e) { /* storage unavailable */ }
+  try { raw = localStorage.getItem(keyNow()); } catch (e) { /* storage unavailable */ }
   try {
     const saved = raw && JSON.parse(raw);
     // Before an update changes how things are saved: keep a copy of the save exactly as it was.
-    if (saved && saved.appVersion !== APP_VERSION) keepSafetyCopy(raw, `before the update to version ${APP_VERSION}`);
+    if (saved && saved.appVersion !== APP_VERSION && !isDemo()) keepSafetyCopy(raw, 'before an update');
     const current = migrate(saved);
     if (current) { current.appVersion = APP_VERSION; return current; }
+    if (isDemo()) return fresh(); // the demo always starts from the example week
     for (const k of LEGACY_KEYS) {
       const old = migrate(JSON.parse(localStorage.getItem(k)));
       if (old) return old; // the legacy copy is left in place
     }
   } catch (e) {
     // Never lose a save that could not be opened: it is kept as a safety copy (Settings → Restore).
-    if (raw) keepSafetyCopy(raw, 'could not be opened');
+    if (raw && !isDemo()) keepSafetyCopy(raw, 'could not be opened');
   }
   return fresh();
 }
@@ -235,6 +297,7 @@ export function safetyCopies() {
 
 // data: the state, or the saved text exactly as it was. Returns true when a copy was kept.
 export function keepSafetyCopy(data, reason, { daily = false } = {}) {
+  if (isDemo()) return false; // demo changes are not her data
   try {
     let copies = safetyCopies();
     if (daily && copies.some((c) => c.daily && c.day === today())) return false;
@@ -257,7 +320,7 @@ export function readSafetyCopy(id) {
 export function save(state) {
   try {
     state.updatedAt = Date.now();
-    localStorage.setItem(KEY, JSON.stringify(state));
+    localStorage.setItem(keyNow(), JSON.stringify(state));
     return true;
   } catch (e) {
     return false;
@@ -281,6 +344,29 @@ export function countScheduled(schedule) {
 
 export const isScheduleEmpty = (schedule) => countScheduled(schedule) === 0;
 
+// What is worth a new copy on the device: her activities, weeks and settings (not the save time).
+export function backupSig(state) {
+  const text = JSON.stringify([state.schedule, state.weeks, state.library, state.series, state.leftovers, state.settings, state.kept]);
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return `${text.length}-${(h >>> 0).toString(36)}`;
+}
+
+// ---------- The planner as compact bytes (v3: the automatic copy kept on the device) ----------
+// gzip of the JSON (typically 5–30 KB). CompressionStream exists in Safari 16.4+, Chrome and Node 18+.
+async function streamBytes(stream) { return new Uint8Array(await new Response(stream).arrayBuffer()); }
+export async function packState(state) {
+  const json = new TextEncoder().encode(JSON.stringify({ app: 'pwr-planner', savedAt: Date.now(), state }));
+  return streamBytes(new Blob([json]).stream().pipeThrough(new CompressionStream('gzip')));
+}
+export async function unpackState(bytes) {
+  const json = await streamBytes(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip')));
+  const data = JSON.parse(new TextDecoder().decode(json));
+  const state = migrate(data?.state || data);
+  if (!state) throw new Error('This file is not a planner backup.');
+  return state;
+}
+
 // ---------- Backup file ----------
 
 export function exportBackup(state) {
@@ -300,14 +386,25 @@ export async function importBackup(file) {
   return state;
 }
 
+// What the device should have: this week's lines and quiet times. Compared with the last sync to say
+// "Device: up to date" or "not sent yet" in the top bar.
+export function deviceSignature(state) {
+  return state ? JSON.stringify(scheduleToLines(state.schedule, { times: true })) : '';
+}
+
 // ---------- Device backup lines (docs/protocol.md) ----------
 
 const clean = (s) => String(s).replace(/\|/g, '/').trim();
 
-export function scheduleToLines(schedule) {
+// times: add the clock time as a 5th field ("…|green|10:30"). Only for firmware that says it understands it
+// (protocol v2, HELLO|2); older firmware would read the time as the energy.
+export function scheduleToLines(schedule, { times = false } = {}) {
   const lines = [];
-  DAYS.forEach((day) => PERIODS.forEach((period) => (schedule[day][period] || []).forEach((a) => {
-    lines.push(`${day}|${period}|${clean(a.name)}|${a.energy === 'rest' ? 'green' : a.energy}`); // the device knows green / yellow / red
+  // Within a time of day, activities with a clock time come first, in time order (as on screen).
+  const byTime = (list) => [...list].sort((a, b) => (a.time ? 0 : 1) - (b.time ? 0 : 1) || (a.time && b.time ? a.time.localeCompare(b.time) : 0));
+  DAYS.forEach((day) => PERIODS.forEach((period) => byTime(schedule[day][period] || []).forEach((a) => {
+    const base = `${day}|${period}|${clean(a.name)}|${a.energy === 'rest' ? 'green' : a.energy}`; // the device knows green / yellow / red
+    lines.push(times && a.time ? `${base}|${a.time}` : base);
   })));
   return lines;
 }
@@ -319,7 +416,7 @@ export function linesToSchedule(lines, library) {
   const lib = library.map((x) => ({ ...x }));
   const titleCase = (s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
   for (const line of lines) {
-    const [d, p, name, energy] = line.split('|');
+    const [d, p, name, energy, time] = line.split('|');
     const day = DAYS.find((x) => x.toLowerCase() === String(d).toLowerCase());
     const period = PERIODS.find((x) => x.toLowerCase() === String(p).toLowerCase()) || 'Morning';
     if (!day || !name) continue;
@@ -329,7 +426,7 @@ export function linesToSchedule(lines, library) {
       item = { id: uid(), name: titleCase(name), energy: e, duration: 30, fixed: false, reminder: true };
       lib.push(item);
     }
-    schedule[day][period].push({ ...item, id: uid(), activityId: item.id, energy: item.energy === 'rest' ? 'rest' : e });
+    schedule[day][period].push({ ...item, id: uid(), activityId: item.id, energy: item.energy === 'rest' ? 'rest' : e, ...(/^\d{1,2}:\d\d$/.test(time || '') ? { time } : {}) });
   }
   return { schedule, library: lib };
 }
