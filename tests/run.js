@@ -113,12 +113,14 @@ check('...and undo of the stop makes it weekly again, still one card', names(app
 const store = {};
 globalThis.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
 const oldSave = { ...JSON.parse(JSON.stringify(st)), version: 4, appVersion: '0.8.5' };
-delete oldSave.series; delete oldSave.weeks;
+delete oldSave.series; delete oldSave.weeks; delete oldSave.touched; // as saved before v0.10
 store['pwr-planner'] = JSON.stringify(oldSave);
 const loadedSave = load();
 check('an update keeps a safety copy of the save exactly as it was', safetyCopies().length === 1 && /before an update/.test(safetyCopies()[0].reason) && safetyCopies()[0].data === JSON.stringify(oldSave));
 check('the save opens normally after the update', loadedSave.version === 5 && loadedSave.appVersion === APP_VERSION && !!findItem(loadedSave.schedule, 's1'));
 check('a new planner opens on Week by default', fresh().settings.startView === 'weekly');
+check('a planner saved before v0.10 counts as hers (copied to the device, never replaced from it)', loadedSave.touched === true);
+check('a brand-new example planner stays untouched, even once saved', fresh().touched === false && migrate(JSON.parse(JSON.stringify(fresh()))).touched === false);
 check('an older saved planner opens on Week by default', loadedSave.settings.startView === 'weekly');
 save({ ...loadedSave, settings: { ...loadedSave.settings, startView: 'day' } });
 check('the One day opening preference is saved and reloaded', load().settings.startView === 'day');
@@ -381,6 +383,11 @@ console.log('Photo, reminders, French');
   const rem = remindersFor ? remindersFor(rs, 'Monday', [], 60) : [];
   check('reminders: the morning block 60 min before 9:00, and Physio 60 min before 10:30', rem.length === 2 && rem[0].at === 8 * 60 && rem[0].items.length === 1 && rem[1].at === 9 * 60 + 30);
   check('reminders: rest and "no reminder" activities are left out', !rem.some((r) => r.items.some((a) => a.id === 'c' || a.id === 'd')));
+  const { remindersOnIpad } = await import('../js/rules.js');
+  const plan = (appReminders, synced) => ({ settings: { appReminders }, deviceSync: synced ? { at: 1 } : undefined });
+  check('iPad reminders: automatic = on before any device sync, off after (never two at once)', remindersOnIpad(plan(null, false)) === true && remindersOnIpad(plan(null, true)) === false);
+  check('iPad reminders: her own choice always wins', remindersOnIpad(plan(true, true)) === true && remindersOnIpad(plan(false, false)) === false);
+  check('iPad reminders: the old default "on" becomes automatic, a new planner starts automatic', migrate({ ...fresh(), settings: { ...fresh().settings, appReminders: true, remindersAuto: undefined } }).settings.appReminders === null && fresh().settings.appReminders === null);
 
   // Pictures and French texts
   check('pictures: chosen from the name, whole words only', iconId({ name: 'Change bed and towels' }) === 'bed' && iconId({ name: 'Hang laundry' }) === 'laundry' && iconId({ name: 'Rendez-vous médical' }) === 'medical' && iconId({ name: 'Lunch with a friend' }) === 'coffee');

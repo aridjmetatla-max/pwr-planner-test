@@ -102,7 +102,8 @@ export const defaultSettings = () => ({
   size: 'standard',        // 'small' 15 px · 'standard' 17 px · 'large' 19 px · 'xlarge' 22 px
   spacing: 'comfortable',  // or 'spacious' (W3C COGA: let users adjust white space)
   lang: defaultLang(),     // 'en' or 'fr' (client feedback, Nov 2026)
-  appReminders: true,      // reminders on the iPad too, at the same times as the device
+  appReminders: null,      // iPad reminders: null = automatic (on until a device is synced, then the device reminds alone); true / false = her choice
+  wakeWord: false,         // listen for "Hey Cal" (voice/wakeword.js); off until she turns it on
   suggestionsOpen: false,  // the Suggestions panel is closed until she opens it
   layout: 'week',          // main screen: 'week' or 'day' (One day), switch at the top
   tutorialDone: false,     // the first-use tutorial was seen (or skipped)
@@ -186,6 +187,7 @@ export function fresh() {
     weeks: {},
     settings: defaultSettings(),
     changeLog: [],
+    touched: false, // a new example planner: may be replaced by her planner kept on the device (v3)
     updatedAt: Date.now(),
   };
   if (getLang() === 'fr') {
@@ -241,6 +243,11 @@ export function migrate(raw) {
     s.version = 5;
   }
   s.settings = { ...defaultSettings(), ...(s.settings || {}) };
+  // A saved planner from before v0.10 is her real planner: "touched" (so it is copied to the device and never
+  // offered a "put back" from it). Only a brand-new example planner (fresh(): touched false) is untouched.
+  if (s.touched === undefined) s.touched = true;
+  // v0.10.2: "on" was only the default before, never her choice: iPad reminders become automatic (no double reminders).
+  if (!s.settings.remindersAuto) { if (s.settings.appReminders === true) s.settings.appReminders = null; s.settings.remindersAuto = true; }
   // 'today' (v0.9.1, before One day replaced the Today screen) now opens One day.
   s.settings.startView = ['day', 'today'].includes(s.settings.startView) ? 'day' : 'weekly';
   if (s.settings.large && !raw.settings?.size) s.settings.size = 'large'; // old "Larger text" switch
